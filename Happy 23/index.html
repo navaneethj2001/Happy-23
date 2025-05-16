@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Dino Runner</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/addons/p5.sound.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f0f0f0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <script>
+        const GRAVITY = 0.6;
+        const JUMP_FORCE = -12;
+        const GROUND_Y_OFFSET = 50;
+        const PLAYER_X_POS = 100;
+        const OBSTACLE_SPEED_START = 5;
+        const OBSTACLE_SPAWN_RATE_START = 90;
+        const BG_LAYER_1_SPEED = 1;
+        const BG_LAYER_2_SPEED = 4;
+        const SCORE_INCREMENT = 1;
+        const WIN_SCORE = 5000;
+        const TROPHY_SPEED = 5;
+        const TROPHY_SPAWN_RATE = 120;
+
+        let player;
+        let obstacles = [];
+        let groundY;
+        let score = 0;
+        let obstacleSpeed;
+        let obstacleSpawnRate;
+        let gameFrame = 0;
+        let gameState = 'start';
+        let trophies = [];
+
+        let bgLayer1X = 0;
+        let bgLayer2X = 0;
+        let skyColor;
+        let bgLayer2Width;
+        let bgLayer2DrawX = 0;
+        let bgStretchFactor = 3.75;
+
+        let dinoImg;
+        let obstacleImg;
+        let bgLayer1Img;
+        let bgLayer2Img;
+        let trophyImg;
+
+        let jumpSound;
+        let hitSound;
+        let gameOverImg;
+        let winScreenImg;
+        let winSound;
+
+        function preload() {
+            dinoImg = loadImage('assets/dino-sprite.gif');
+            obstacleImg = loadImage('assets/cactus-obstacle.png');
+            bgLayer1Img = loadImage('assets/background-far.png');
+            bgLayer2Img = loadImage('assets/background-near.png');
+            trophyImg = loadImage('assets/trophy.png');
+            jumpSound = loadSound('assets/jump.mp3');
+            hitSound = loadSound('assets/hit.mp3');
+            gameOverImg = loadImage('assets/gameover.jpg');
+            winScreenImg = loadImage('assets/winscreen.jpg');
+            winSound = loadSound('assets/win.mp3');
+        }
+
+        function setup() {
+            let canvas = createCanvas(800, 400);
+            let x = (windowWidth - width) / 2;
+            let y = (windowHeight - height) / 2;
+            canvas.position(x, y);
+
+            groundY = height - GROUND_Y_OFFSET;
+            obstacleSpeed = OBSTACLE_SPEED_START;
+            obstacleSpawnRate = OBSTACLE_SPAWN_RATE_START;
+
+            player = {
+                x: PLAYER_X_POS,
+                y: groundY,
+                vy: 0,
+                width: dinoImg.width / 2 * 0.25,
+                height: dinoImg.height / 2 * 0.25,
+                isGrounded: true,
+
+                applyGravity: function () {
+                    if (!this.isGrounded) {
+                        this.vy += GRAVITY;
+                        this.y += this.vy;
+                    }
+                    if (this.y >= groundY - this.height) {
+                        this.y = groundY - this.height;
+                        this.vy = 0;
+                        this.isGrounded = true;
+                    } else {
+                        this.isGrounded = (this.y === groundY - this.height);
+                    }
+                },
+
+                jump: function () {
+                    if (this.isGrounded) {
+                        this.vy = JUMP_FORCE;
+                        this.isGrounded = false;
+                        jumpSound.play();
+                    }
+                },
+
+                draw: function () {
+                    image(dinoImg, this.x, this.y, this.width, this.height);
+                },
+
+                getHitbox: function () {
+                    let paddingX = 5;
+                    let paddingY = 5;
+                    return {
+                        x: this.x + paddingX,
+                        y: this.y + paddingY,
+                        w: this.width - paddingX * 2,
+                        h: this.height - paddingY * 2
+                    };
+                }
+            };
+
+            skyColor = color(135, 206, 250);
+            textAlign(CENTER, CENTER);
+            textSize(24);
+            textFont('monospace');
+            bgLayer2Width = bgLayer2Img.width;
+            bgLayer2DrawX = 0;
+        }
+
+        function draw() {
+            gameFrame++;
+            drawBackground();
+
+            if (gameState === 'start') {
+                displayStartScreen();
+            } else if (gameState === 'playing') {
+                runGame();
+                drawGround(); // Call drawGround() only when playing
+            } else if (gameState === 'gameOver') {
+                displayGameOverScreen();
+            } else if (gameState === 'won') {
+                displayWinScreen();
+            }
+            // Removed drawGround() from here
+        }
+
+        function keyPressed() {
+            if (keyCode === 32 || keyCode === UP_ARROW) {
+                if (gameState === 'playing') {
+                    player.jump();
+                } else if (gameState === 'start' || gameState === 'gameOver' || gameState === 'won') {
+                    gameState = 'playing';
+                    resetGame();
+                }
+            }
+        }
+
+        function mousePressed() {
+            if (gameState === 'start') {
+                gameState = 'playing';
+                resetGame();
+            }
+        }
+
+        function touchStarted() {
+            mousePressed();
+            return false;
+        }
+
+        function runGame() {
+            player.applyGravity();
+            player.draw();
+
+            if (score < WIN_SCORE) {
+                handleObstacles();
+            } else {
+                handleTrophies();
+            }
+
+            score += SCORE_INCREMENT;
+            displayScoreAndInstructions();
+        }
+
+        function handleObstacles() {
+            if (gameFrame % obstacleSpawnRate === 0) {
+                if (random(1) > 0.3) {
+                    spawnObstacle();
+                }
+                gameFrame = int(random(-5, 5));
+            }
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                obstacles[i].update();
+                obstacles[i].draw();
+
+                if (checkCollision(player.getHitbox(), obstacles[i].getHitbox())) {
+                    gameState = 'gameOver';
+                    hitSound.play();
+                }
+
+                if (obstacles[i].isOffscreen()) {
+                    obstacles.splice(i, 1);
+                }
+            }
+        }
+
+        function spawnObstacle() {
+            let obstacleHeight = random(30, 60);
+            let obstacleWidth = 25;
+            let newObstacle = {
+                x: width,
+                y: groundY - obstacleHeight,
+                width: obstacleWidth,
+                height: obstacleHeight,
+
+                update: function () {
+                    this.x -= obstacleSpeed;
+                },
+
+                draw: function () {
+                    image(obstacleImg, this.x, this.y, this.width, this.height);
+                },
+
+                isOffscreen: function () {
+                    return this.x < -this.width;
+                },
+
+                getHitbox: function () {
+                    let padding = 3;
+                    return {
+                        x: this.x + padding,
+                        y: this.y + padding,
+                        w: this.width - padding * 2,
+                        h: this.height - padding * 2
+                    };
+                }
+            };
+            obstacles.push(newObstacle);
+        }
+
+        function handleTrophies() {
+            if (gameFrame % TROPHY_SPAWN_RATE === 0) {
+                spawnTrophy();
+                gameFrame = 0;
+            }
+
+            for (let i = trophies.length - 1; i >= 0; i--) {
+                trophies[i].update();
+                trophies[i].draw();
+
+                if (checkCollision(player.getHitbox(), trophies[i].getHitbox())) {
+                    gameState = 'won';
+                    winSound.play();
+                    return;
+                }
+
+                if (trophies[i].isOffscreen()) {
+                    trophies.splice(i, 1);
+                }
+            }
+        }
+
+        function spawnTrophy() {
+            let trophySize = 40;
+            // let trophyY = player.y; // removed
+            let trophyY = groundY - trophyImg.height / 2 * 0.25; // added
+            let newTrophy = {
+                x: width,
+                y: trophyY,
+                width: trophyImg.width / 2 * 0.25,
+                height: trophyImg.height / 2 * 0.25,
+                update: function () {
+                    this.x -= TROPHY_SPEED;
+                },
+                draw: function () {
+                    image(trophyImg, this.x, this.y, this.width, this.height);
+                },
+                isOffscreen: function () {
+                    return this.x < -this.width;
+                },
+                getHitbox: function () {
+                    return {
+                        x: this.x,
+                        y: this.y,
+                        w: this.width,
+                        h: this.height
+                    };
+                }
+            };
+            trophies.push(newTrophy);
+        }
+
+        function checkCollision(rect1, rect2) {
+            return (
+                rect1.x < rect2.x + rect2.w &&
+                rect1.x + rect1.w > rect2.x &&
+                rect1.y < rect2.y + rect2.h &&
+                rect1.y + rect1.h > rect2.y
+            );
+        }
+
+        function resetGame() {
+            score = 0;
+            obstacles = [];
+            trophies = [];
+            player.y = groundY - player.height;
+            player.vy = 0;
+            player.isGrounded = true;
+            gameFrame = 0;
+            obstacleSpeed = OBSTACLE_SPEED_START;
+            obstacleSpawnRate = OBSTACLE_SPAWN_RATE_START;
+            bgLayer1X = 0;
+            bgLayer2X = 0;
+            bgLayer2DrawX = 0;
+        }
+
+        function drawBackground() {
+            background(skyColor);
+            image(bgLayer1Img, bgLayer1X, 0, width, height);
+            image(bgLayer1Img, bgLayer1X + width, 0, width, height);
+
+            // Calculate stretched width
+            let stretchedWidth = bgLayer2Width * bgStretchFactor;
+            // Calculate the offset to center the stretched image
+            let xOffset = (stretchedWidth - bgLayer2Width) / 2;
+
+            // Draw the near background with stretching
+            image(bgLayer2Img, bgLayer2DrawX, 0, stretchedWidth, height);
+
+
+            if (gameState === 'playing') {
+                bgLayer1X -= BG_LAYER_1_SPEED;
+                bgLayer2DrawX -= BG_LAYER_2_SPEED;
+
+                if (bgLayer1X <= -width) {
+                    bgLayer1X = 0;
+                }
+                if (bgLayer2DrawX <= -stretchedWidth) {
+                    bgLayer2DrawX = 0;
+                }
+            }
+        }
+
+        function drawGround() {
+            fill(139, 69, 19);
+            noStroke();
+            rect(0, groundY, width, GROUND_Y_OFFSET);
+        }
+
+        function displayScoreAndInstructions() {
+            fill(255);
+            stroke(0);
+            strokeWeight(3);
+            textSize(24);
+            textAlign(LEFT, TOP);
+            text(`Score: ${floor(score)}`, 20, 20);
+            textAlign(RIGHT, TOP);
+            text(`[SPACE] or [UP] to Jump`, width - 20, 20);
+        }
+
+        function displayStartScreen() {
+            drawBackground();
+            drawGround();
+            fill(0, 0, 0, 150);
+            rect(0, 0, width, height);
+            fill(255);
+            stroke(0);
+            strokeWeight(4);
+            textAlign(CENTER, CENTER);
+            textSize(48);
+            text("DINO RUNNER", width / 2, height / 2 - 70);
+            textSize(24);
+            text("Click / Tap / Press [SPACE] to Start", width / 2, height / 2 - 10);
+            textSize(18);
+            text("Avoid the Obstacles!", width / 2, height / 2 + 30);
+            textSize(18);
+            text("Reach 5000 to Win!", width / 2, height / 2 + 55);
+        }
+
+        function displayGameOverScreen() {
+            image(gameOverImg, 0, 0, width, height);
+            fill(255);
+            stroke(0);
+            strokeWeight(4);
+            textSize(32);
+            textAlign(LEFT, TOP);
+            text(`Final Score: ${floor(score)}`, 20, 20);
+        }
+
+        function displayWinScreen() {
+            image(winScreenImg, 0, 0, width, height);
+        }
+
+        function windowResized() {
+            let x = (windowWidth - width) / 2;
+            let y = (windowHeight - height) / 2;
+            canvas.position(x, y);
+        }
+    </script>
+</body>
+</html>

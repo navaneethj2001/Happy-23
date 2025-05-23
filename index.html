@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Happy-23</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/addons/p5.sound.min.js"></script>
+    <style>
+        html, body {
+            margin: 0;
+            overflow: hidden; /* Prevent scrollbars */
+            height: 100%; /* Ensure html and body take full height */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #000; /* Set body background to black as a fallback/initial state */
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <script>
+        // --- Game Constants ---
+        const GRAVITY = 0.6;
+        const JUMP_FORCE = -12;
+        const GROUND_Y_OFFSET = 50;
+        const PLAYER_X_POS = 100;
+        const OBSTACLE_SPEED_START = 5;
+        const OBSTACLE_SPAWN_RATE_START = 90;
+        const BG_LAYER_1_SPEED = 1;
+        const BG_LAYER_2_SPEED = 4;
+        const SCORE_INCREMENT = 1;
+        const WIN_SCORE = 5000;
+        const TROPHY_SPEED = 5;
+        const TROPHY_SPAWN_RATE = 120;
+
+        // --- Scaling Constants (New) ---
+        // Define a reference resolution for your game. All elements will be scaled based on this.
+        const REFERENCE_WIDTH = 800;
+        const REFERENCE_HEIGHT = 400;
+        let scaleFactor = 1; // This will be calculated based on window size
+
+        // --- Game Variables ---
+        let player;
+        let obstacles = [];
+        let groundY;
+        let score = 0;
+        let obstacleSpeed;
+        let obstacleSpawnRate;
+        let gameFrame = 0;
+        let gameState = 'start';
+        let trophies = [];
+
+        let bgLayer1X = 0;
+        let bgLayer2X = 0;
+        let skyColor;
+        let bgLayer2Width;
+        let bgLayer2DrawX = 0;
+        let bgStretchFactor = 3.75;
+
+        // --- Asset Variables ---
+        let dinoImg;
+        let obstacleImg;
+        let bgLayer1Img;
+        let bgLayer2Img;
+        let trophyImg;
+        let jumpSound;
+        let hitSound;
+        let gameOverImg;
+        let winScreenImg;
+        let winSound;
+        let startScreenImg;
+        let gameStartSound;
+
+        function preload() {
+            dinoImg = loadImage('assets/dino-sprite.gif');
+            obstacleImg = loadImage('assets/cactus-obstacle.png');
+            bgLayer1Img = loadImage('assets/background-far.png');
+            bgLayer2Img = loadImage('assets/background-near.png');
+            trophyImg = loadImage('assets/trophy.png');
+            jumpSound = loadSound('assets/jump.mp3');
+            hitSound = loadSound('assets/hit.mp3');
+            gameOverImg = loadImage('assets/gameover.jpg');
+            winScreenImg = loadImage('assets/winscreen.jpg');
+            winSound = loadSound('assets/win.mp3');
+            startScreenImg = loadImage('assets/start.jpg');
+            gameStartSound = loadSound('assets/gamestart.mp3');
+        }
+
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            calculateScaleFactor();
+
+            groundY = REFERENCE_HEIGHT - GROUND_Y_OFFSET;
+            obstacleSpeed = OBSTACLE_SPEED_START;
+            obstacleSpawnRate = OBSTACLE_SPAWN_RATE_START;
+
+            player = {
+                x: PLAYER_X_POS,
+                y: groundY,
+                vy: 0,
+                width: dinoImg.width / 2 * 0.25,
+                height: dinoImg.height / 2 * 0.25,
+                isGrounded: true,
+
+                applyGravity: function () {
+                    if (!this.isGrounded) {
+                        this.vy += GRAVITY;
+                        this.y += this.vy;
+                    }
+                    if (this.y >= groundY - this.height) {
+                        this.y = groundY - this.height;
+                        this.vy = 0;
+                        this.isGrounded = true;
+                    } else {
+                        this.isGrounded = (this.y === groundY - this.height);
+                    }
+                },
+
+                jump: function () {
+                    if (this.isGrounded) {
+                        this.vy = JUMP_FORCE;
+                        this.isGrounded = false;
+                        jumpSound.play();
+                    }
+                },
+
+                draw: function () {
+                    image(dinoImg, this.x, this.y, this.width, this.height);
+                },
+
+                getHitbox: function () {
+                    let paddingX = 5;
+                    let paddingY = 5;
+                    return {
+                        x: this.x + paddingX,
+                        y: this.y + paddingY,
+                        w: this.width - paddingX * 2,
+                        h: this.height - paddingY * 2
+                    };
+                }
+            };
+
+            skyColor = color(135, 206, 250);
+            textAlign(CENTER, CENTER);
+            textSize(24);
+            textFont('monospace');
+            bgLayer2Width = bgLayer2Img.width;
+            bgLayer2DrawX = 0;
+        }
+
+        function draw() {
+            // STEP 1: Fill the entire canvas black (this is the outer frame color)
+            background(0);
+
+            // STEP 2: Apply scaling and translation for the game content
+            push(); // Save the current transformation state
+
+            // Translate first to center the scaled content
+            translate( (width - REFERENCE_WIDTH * scaleFactor) / 2, (height - REFERENCE_HEIGHT * scaleFactor) / 2);
+            // Then scale the content
+            scale(scaleFactor);
+
+            // NEW: Apply clipping path for everything inside the game frame
+            // This ensures nothing drawn AFTER this point will extend beyond REFERENCE_WIDTH x REFERENCE_HEIGHT
+            drawingContext.save(); // Save canvas's raw 2D context state
+            drawingContext.beginPath();
+            drawingContext.rect(0, 0, REFERENCE_WIDTH, REFERENCE_HEIGHT);
+            drawingContext.clip(); // Apply the clip path
+
+            // --- Your game drawing logic goes here ---
+            gameFrame++;
+
+            // Draw the sky background color first, covering the entire game area
+            fill(skyColor);
+            noStroke();
+            rect(0, 0, REFERENCE_WIDTH, REFERENCE_HEIGHT);
+
+            drawBackgroundLayers(); // Now draw the moving background layers on top of the sky color
+            
+            if (gameState === 'start') {
+                displayStartScreen();
+            } else if (gameState === 'playing') {
+                runGame();
+                drawGround();
+            } else if (gameState === 'gameOver') {
+                displayGameOverScreen();
+            } else if (gameState === 'won') {
+                displayWinScreen();
+            }
+            // --- End of game drawing logic ---
+
+            drawingContext.restore(); // Restore canvas's raw 2D context state (removes the clip path)
+
+            pop(); // Restore the p5.js transformation state
+        }
+
+        function keyPressed() {
+            if (keyCode === 32 || keyCode === UP_ARROW) {
+                if (gameState === 'playing') {
+                    player.jump();
+                } else if (gameState === 'start') {
+                    startGame();
+                }
+                 else if (gameState === 'gameOver' || gameState === 'won') {
+                    startGame();
+                }
+            }
+        }
+
+        function mousePressed() {
+            if (gameState === 'start') {
+                startGame();
+            }
+        }
+
+        function touchStarted() {
+            mousePressed();
+            return false;
+        }
+
+        function runGame() {
+            player.applyGravity();
+            player.draw();
+
+            if (score < WIN_SCORE) {
+                handleObstacles();
+            } else {
+                handleTrophies();
+            }
+
+            score += SCORE_INCREMENT;
+            displayScoreAndInstructions();
+        }
+
+        function handleObstacles() {
+            if (gameFrame % obstacleSpawnRate === 0) {
+                if (random(1) > 0.3) {
+                    spawnObstacle();
+                }
+                gameFrame = int(random(-5, 5));
+            }
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                obstacles[i].update();
+                obstacles[i].draw();
+
+                if (checkCollision(player.getHitbox(), obstacles[i].getHitbox())) {
+                    gameState = 'gameOver';
+                    hitSound.play();
+                }
+
+                if (obstacles[i].isOffscreen()) {
+                    obstacles.splice(i, 1);
+                }
+            }
+        }
+
+        function spawnObstacle() {
+            let obstacleHeight = random(30, 60);
+            let obstacleWidth = 25;
+            let newObstacle = {
+                x: REFERENCE_WIDTH,
+                y: groundY - obstacleHeight,
+                width: obstacleWidth,
+                height: obstacleHeight,
+
+                update: function () {
+                    this.x -= obstacleSpeed;
+                },
+
+                draw: function () {
+                    image(obstacleImg, this.x, this.y, this.width, this.height);
+                },
+
+                isOffscreen: function () {
+                    return this.x < -this.width;
+                },
+
+                getHitbox: function () {
+                    let padding = 3;
+                    return {
+                        x: this.x + padding,
+                        y: this.y + padding,
+                        w: this.width - padding * 2,
+                        h: this.height - padding * 2
+                    };
+                }
+            };
+            obstacles.push(newObstacle);
+        }
+
+        function handleTrophies() {
+            if (gameFrame % TROPHY_SPAWN_RATE === 0) {
+                spawnTrophy();
+                gameFrame = 0;
+            }
+
+            for (let i = trophies.length - 1; i >= 0; i--) {
+                trophies[i].update();
+                trophies[i].draw();
+
+                if (checkCollision(player.getHitbox(), trophies[i].getHitbox())) {
+                    gameState = 'won';
+                    winSound.play();
+                    return;
+                }
+
+                if (trophies[i].isOffscreen()) {
+                    trophies.splice(i, 1);
+                }
+            }
+        }
+
+        function spawnTrophy() {
+            let trophySize = 40;
+            let trophyY = groundY - trophyImg.height / 2 * 0.25;
+            let newTrophy = {
+                x: REFERENCE_WIDTH,
+                y: trophyY,
+                width: trophyImg.width / 2 * 0.25,
+                height: trophyImg.height / 2 * 0.25,
+                update: function () {
+                    this.x -= TROPHY_SPEED;
+                },
+                draw: function () {
+                    image(trophyImg, this.x, this.y, this.width, this.height);
+                },
+                isOffscreen: function () {
+                    return this.x < -this.width;
+                },
+                getHitbox: function () {
+                    return {
+                        x: this.x,
+                        y: this.y,
+                        w: this.width,
+                        h: this.height
+                    };
+                }
+            };
+            trophies.push(newTrophy);
+        }
+
+        function checkCollision(rect1, rect2) {
+            return (
+                rect1.x < rect2.x + rect2.w &&
+                rect1.x + rect1.w > rect2.x &&
+                rect1.y < rect2.y + rect2.h &&
+                rect1.y + rect1.h > rect2.y
+            );
+        }
+
+        function resetGame() {
+            score = 0;
+            obstacles = [];
+            trophies = [];
+            player.y = groundY - player.height;
+            player.vy = 0;
+            player.isGrounded = true;
+            gameFrame = 0;
+            obstacleSpeed = OBSTACLE_SPEED_START;
+            obstacleSpawnRate = OBSTACLE_SPAWN_RATE_START;
+            bgLayer1X = 0;
+            bgLayer2X = 0;
+            bgLayer2DrawX = 0;
+            gameStartSound.play();
+        }
+
+        function drawBackgroundLayers() {
+            image(bgLayer1Img, bgLayer1X, 0, REFERENCE_WIDTH, REFERENCE_HEIGHT);
+            image(bgLayer1Img, bgLayer1X + REFERENCE_WIDTH, 0, REFERENCE_WIDTH, REFERENCE_HEIGHT);
+
+            let stretchedWidth = bgLayer2Width * bgStretchFactor;
+            image(bgLayer2Img, bgLayer2DrawX, 0, stretchedWidth, REFERENCE_HEIGHT);
+
+            if (gameState === 'playing') {
+                bgLayer1X -= BG_LAYER_1_SPEED;
+                bgLayer2DrawX -= BG_LAYER_2_SPEED;
+
+                if (bgLayer1X <= -REFERENCE_WIDTH) {
+                    bgLayer1X = 0;
+                }
+                if (bgLayer2DrawX <= -stretchedWidth) {
+                    bgLayer2DrawX = 0;
+                }
+            }
+        }
+
+        function drawGround() {
+            fill(139, 69, 19);
+            noStroke();
+            rect(0, groundY, REFERENCE_WIDTH, GROUND_Y_OFFSET);
+        }
+
+        function displayScoreAndInstructions() {
+            fill(255);
+            stroke(0);
+            strokeWeight(3);
+            textSize(24);
+            textAlign(LEFT, TOP);
+            text(`Score: ${floor(score)}`, 20, 20);
+            textAlign(RIGHT, TOP);
+            text(`[SPACE] or [UP] to Jump`, REFERENCE_WIDTH - 20, 20);
+        }
+
+        function displayStartScreen() {
+            image(startScreenImg, 0, 0, REFERENCE_WIDTH, REFERENCE_HEIGHT);
+        }
+
+        function displayGameOverScreen() {
+            image(gameOverImg, 0, 0, REFERENCE_WIDTH, REFERENCE_HEIGHT);
+            fill(255);
+            stroke(0);
+            strokeWeight(4);
+            textSize(32);
+            textAlign(LEFT, TOP);
+            text(`Final Score: ${floor(score)}`, 20, 20);
+        }
+
+        function displayWinScreen() {
+            image(winScreenImg, 0, 0, REFERENCE_WIDTH, REFERENCE_HEIGHT);
+        }
+
+        function calculateScaleFactor() {
+            let widthRatio = windowWidth / REFERENCE_WIDTH;
+            let heightRatio = windowHeight / REFERENCE_HEIGHT;
+            scaleFactor = min(widthRatio, heightRatio);
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+            calculateScaleFactor();
+            groundY = REFERENCE_HEIGHT - GROUND_Y_OFFSET;
+            player.y = groundY - player.height;
+        }
+
+        function startGame() {
+            gameStartSound.play();
+            gameState = 'playing';
+            resetGame();
+        }
+    </script>
+</body>
+</html>
